@@ -1,0 +1,62 @@
+name: Build PINGGO Android AAB
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract PINGGO project
+        run: |
+          rm -rf pinggo-build
+          mkdir pinggo-build
+          unzip -q "Pinggo android github.zip" -d pinggo-build
+          test -f "pinggo-build/PINGGO-Android-PlayStore/app/build.gradle"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.1"
+
+      - name: Decode PINGGO upload key
+        env:
+          PINGGO_KEYSTORE_BASE64: ${{ secrets.PINGGO_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$PINGGO_KEYSTORE_BASE64" || (echo "ERROR: PINGGO_KEYSTORE_BASE64 secret is missing" && exit 1)
+          printf '%s' "$PINGGO_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/pinggo-upload.jks"
+          test -s "$RUNNER_TEMP/pinggo-upload.jks"
+
+      - name: Build signed Android App Bundle
+        working-directory: pinggo-build/PINGGO-Android-PlayStore
+        env:
+          PINGGO_KEYSTORE_PATH: ${{ runner.temp }}/pinggo-upload.jks
+          PINGGO_STORE_PASSWORD: ${{ secrets.PINGGO_STORE_PASSWORD }}
+          PINGGO_KEY_ALIAS: ${{ secrets.PINGGO_KEY_ALIAS }}
+          PINGGO_KEY_PASSWORD: ${{ secrets.PINGGO_KEY_PASSWORD }}
+        run: |
+          test -n "$PINGGO_STORE_PASSWORD" || (echo "ERROR: PINGGO_STORE_PASSWORD secret is missing" && exit 1)
+          test -n "$PINGGO_KEY_ALIAS" || (echo "ERROR: PINGGO_KEY_ALIAS secret is missing" && exit 1)
+          test -n "$PINGGO_KEY_PASSWORD" || (echo "ERROR: PINGGO_KEY_PASSWORD secret is missing" && exit 1)
+          gradle --no-daemon clean bundleRelease
+          jarsigner -verify app/build/outputs/bundle/release/app-release.aab
+
+      - name: Upload signed PINGGO AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: PINGGO-PlayStore-AAB
+          path: pinggo-build/PINGGO-Android-PlayStore/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 30
